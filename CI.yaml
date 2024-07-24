@@ -1,0 +1,57 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  resharperVersion: '2023.1.3'  # Specify the version of ReSharper CLT you want to use
+  resharperDownloadUrl: 'https://download.jetbrains.com/resharper/ReSharperUltimate.2023.1.3/JetBrains.ReSharper.CommandLineTools.2023.1.3.zip'
+  resharperInstallPath: '$(Pipeline.Workspace)/resharper'
+  resharperOutputFile: '$(Pipeline.Workspace)/resharper-output.xml'
+
+steps:
+- task: UseDotNet@2
+  inputs:
+    packageType: 'sdk'
+    version: '6.x.x'  # Specify the version of .NET SDK your project requires
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      # Create directory for ReSharper CLT
+      New-Item -ItemType Directory -Force -Path "$(resharperInstallPath)"
+      
+      # Download ReSharper CLT zip
+      Invoke-WebRequest -Uri "$(resharperDownloadUrl)" -OutFile "$(resharperInstallPath)/resharper.zip"
+      
+      # Extract the zip file
+      Expand-Archive -Path "$(resharperInstallPath)/resharper.zip" -DestinationPath "$(resharperInstallPath)"
+      
+      # Verify the installation
+      & "$(resharperInstallPath)/dupfinder.exe" --version
+
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      # Run ReSharper code analysis
+      & "$(resharperInstallPath)/inspectcode.exe" YourSolution.sln /o="$(resharperOutputFile)"
+    workingDirectory: '$(Build.SourcesDirectory)'
+
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      # Parse the ReSharper output file and fail the build if there are warnings or errors
+      [xml]$resharperReport = Get-Content "$(resharperOutputFile)"
+      $issues = $resharperReport.IssueTypes.IssueType | Where-Object { $_.Severity -eq 'ERROR' -or $_.Severity -eq 'WARNING' }
+      
+      if ($issues) {
+        Write-Error "ReSharper analysis reported warnings or errors. Failing the build."
+        exit 1
+      } else {
+        Write-Output "No ReSharper warnings or errors found."
+      }
